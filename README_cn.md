@@ -2,7 +2,7 @@
 
 # tron1-rl-isaaclab
 
-基于 [Isaac Lab](https://isaac-sim.github.io/IsaacLab/) 的 LimX **TRON1** 双足机器人强化学习训练栈，使用 PPO 训练 locomotion 与 manipulation 策略。本仓库扩展了 Isaac Lab 模板，支持 TRON1 机器人变体的 Sim-to-Real 训练。
+基于 [Isaac Lab](https://isaac-sim.github.io/IsaacLab/) 的 LimX **TRON1** 双足机器人强化学习训练栈，使用 PPO 训练 locomotion 策略。本仓库扩展了 Isaac Lab 模板，支持 TRON1 机器人变体的 Sim-to-Real 训练。
 
 ## 环境要求
 
@@ -13,16 +13,16 @@
 ## 安装
 
 ```bash
-# 1. clone 仓库连同子模块
-git clone --recurse-submodules https://github.com/limxdynamics/tron1-rl-isaaclab.git
+# 1. clone 仓库
+git clone https://github.com/limxdynamics/tron1-rl-isaaclab.git
 cd tron1-rl-isaaclab
-# 如果已 clone 但未拉子模块：
-git submodule update --init --recursive
 
 # 2. editable install extension 与 vendored rsl_rl
 pip install -e exts/bipedal_locomotion
 pip install -e rsl_rl
 ```
+
+> **说明：** 机器人模型资产（USD 文件）已内置在 `exts/bipedal_locomotion/bipedal_locomotion/assets/usd/` 中，覆盖 SF_TRON1A、WF_TRON1A 和 PF_TRON1A 三种变体，无需额外下载模型文件。
 
 ## 训练
 
@@ -40,6 +40,8 @@ python scripts/rsl_rl/train.py --task Isaac-Limx-WF-TRON1A-Blind-Flat-v0 --num_e
 - --checkpoint_path <path> -- 从指定的 .pt checkpoint 恢复训练
 - --video -- 启用视频录制
 - --max_iterations N -- 覆盖最大迭代次数
+
+日志路径：logs/rsl_rl/<experiment_name>/<timestamp>_<run_name>/
 
 ## 机器人形态
 
@@ -59,4 +61,4 @@ python scripts/rsl_rl/train.py --task Isaac-Limx-WF-TRON1A-Blind-Flat-v0 --num_e
 
 ## 许可证
 
-[Apache 2.0](LICENSE)。
+[Apache 2.0](LICENCE)。
