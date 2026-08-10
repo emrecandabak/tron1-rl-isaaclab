@@ -22,7 +22,7 @@ pip install -e exts/bipedal_locomotion
 pip install -e rsl_rl
 ```
 
-> **Note:** Robot model assets (USD files) for SF_TRON1A, WF_TRON1A, and PF_TRON1A are bundled inside `exts/bipedal_locomotion/bipedal_locomotion/assets/usd/`. No additional model download is required.
+> **Note:** Robot model assets (USD files) for SF_TRON1A and WF_TRON1A are bundled inside `exts/bipedal_locomotion/bipedal_locomotion/assets/usd/`. No additional model download is required.
 
 ## Training
 
