@@ -22,7 +22,7 @@ pip install -e exts/bipedal_locomotion
 pip install -e rsl_rl
 ```
 
-> **说明：** 机器人模型资产（USD 文件）已内置在 `exts/bipedal_locomotion/bipedal_locomotion/assets/usd/` 中，覆盖 SF_TRON1A、WF_TRON1A 和 PF_TRON1A 三种变体，无需额外下载模型文件。
+> **说明：** 机器人模型资产（USD 文件）已内置在 `exts/bipedal_locomotion/bipedal_locomotion/assets/usd/` 中，覆盖 SF_TRON1A 和 WF_TRON1A 两种变体，无需额外下载模型文件。
 
 ## 训练
 
