@@ -61,6 +61,6 @@ SOLEFOOT_CFG = ArticulationCfg(
             stiffness=45.0,
             damping=0.8,
             friction=0.0,
-        ), # TODO: change to delayed implicit actuator
+        ),
     },
 )

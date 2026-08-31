@@ -111,8 +111,8 @@ def main():
         )
         print("Exported policy as jit script to: ", export_model_dir)
         export_mlp_as_onnx(
-            ppo_runner.alg.actor_critic.actor, 
-            export_model_dir, 
+            ppo_runner.alg.actor_critic.actor,
+            export_model_dir,
             "policy",
             ppo_runner.alg.actor_critic.num_actor_obs,
         )
@@ -126,127 +126,95 @@ def main():
     obs, obs_dict = env.get_observations()
     obs_history = obs_dict["observations"].get("obsHistory")
     obs_history = obs_history.flatten(start_dim=1)
-    commands = obs_dict["observations"].get("commands") 
-    
-    # --- SYSID INITIALIZATION ---
-    q_log = []
-    q_dot_log = []
-    tau_log = []
-    q_def_log = []
+    commands = obs_dict["observations"].get("commands")
 
+    # --- MASSIVE PARALLEL SEARCH INITIALIZATION ---
     base_env = env.unwrapped
     robot = base_env.scene["robot"]
-    # The TRON1 solefoot config names the ankles "ankle_L_Joint" and "ankle_R_Joint"
     ankle_indices, ankle_names = robot.find_joints("ankle_.*_Joint")
-    print(f"\n[SYSID] Tracking ankles: {ankle_names}\n")
+    print(f"\n[PASSIVE TUNER] Isolating ankles: {ankle_names}\n")
 
-    num_steps_to_collect = 500
-    timestep = 0
-    # ----------------------------
+    num_envs = base_env.num_envs
+    print(f"[PASSIVE TUNER] Generating {num_envs} random (Kp, Kd) combinations...")
     
+    # Random Uniform Search (statistically better than Grid Search for N > 50)
+    # Kp ranges from 10 to 100, Kd ranges from 0.1 to 4.0
+    search_kp = torch.empty(num_envs, device=base_env.device).uniform_(10.0, 100.0)
+    search_kd = torch.empty(num_envs, device=base_env.device).uniform_(0.1, 4.0)
+
+    # Repeat for both left and right ankles: shape (num_envs, 2)
+    stiffness_tensor = search_kp.unsqueeze(1).repeat(1, 2)
+    damping_tensor = search_kd.unsqueeze(1).repeat(1, 2)
+
+    # Write to simulation engine overrides
+    robot.write_joint_stiffness_to_sim(stiffness_tensor, joint_ids=ankle_indices)
+    robot.write_joint_damping_to_sim(damping_tensor, joint_ids=ankle_indices)
+    
+    print(f"[PASSIVE TUNER] Deployed combinations to all {num_envs} environments!")
+    print(f"[PASSIVE TUNER] Neural Network actions for ankles are forced to 0.0.")
+    
+    total_test_steps = 1000 # Evaluate for 1000 steps (~20 seconds)
+    print(f"[PASSIVE TUNER] Testing for {total_test_steps} steps. Only counting continuous forward movement...\n")
+
+    current_streak = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
+    max_streak = torch.zeros(num_envs, dtype=torch.long, device=base_env.device)
+    
+    timestep = 0
     # simulate environment
-    while simulation_app.is_running():
+    while simulation_app.is_running() and timestep < total_test_steps:
         # run everything in inference mode
         with torch.inference_mode():
             # agent stepping
             est = encoder(obs_history)
             actions = policy(torch.cat((est, obs, commands), dim=-1).detach())
+            
+            # --- FORCE PASSIVE ANKLE (Zero out NN action) ---
+            actions[:, ankle_indices] = 0.0
+
             # env stepping
-            obs, _, _, infos = env.step(actions)
+            obs, rew, dones, infos = env.step(actions)
             obs_history = infos["observations"].get("obsHistory")
             obs_history = obs_history.flatten(start_dim=1)
             commands = infos["observations"].get("commands") 
 
-            # --- SYSID DATA COLLECTION ---
-            if timestep < num_steps_to_collect:
-                # Collect full data arrays (shape: [num_envs, num_ankles])
-                q = robot.data.joint_pos[:, ankle_indices].cpu().numpy()
-                q_dot = robot.data.joint_vel[:, ankle_indices].cpu().numpy()
-                tau = robot.data.applied_torque[:, ankle_indices].cpu().numpy()
-                q_def = robot.data.default_joint_pos[:, ankle_indices].cpu().numpy()
-
-                q_log.append(q)
-                q_dot_log.append(q_dot)
-                tau_log.append(tau)
-                q_def_log.append(q_def)
-
-            elif timestep == num_steps_to_collect:
-                print("\n[SYSID] Collection finished. Running regression...\n")
-
-                # Flatten the full arrays for regression
-                q_arr_full = np.concatenate(q_log, axis=0).flatten()
-                q_dot_arr_full = np.concatenate(q_dot_log, axis=0).flatten()
-                tau_arr_full = np.concatenate(tau_log, axis=0).flatten()
-                q_def_arr_full = np.concatenate(q_def_log, axis=0).flatten()
-
-                # Stance-Phase Isolation via Kinematics:
-                # Only fit spring to data where torque > 2.0 (network doing work)
-                stance_mask = np.abs(tau_arr_full) > 2.0
-
-                q_arr = q_arr_full[stance_mask]
-                q_dot_arr = q_dot_arr_full[stance_mask]
-                tau_arr = tau_arr_full[stance_mask]
-                q_def_arr = q_def_arr_full[stance_mask]
-
-                if len(q_arr) == 0:
-                    print("\n[SYSID] ERROR: No stance data collected. Torque threshold may be too high.\n")
-                    break
-
-                # For TRON1, default joint position is often exactly 0.0
-                delta_q_arr = q_arr - q_def_arr
-                X = np.stack([delta_q_arr, q_dot_arr], axis=1)
-                y = tau_arr
-
-                # Standard Least Squares
-                coef, residuals, rank, s = np.linalg.lstsq(X, y, rcond=None)
-
-                Kp = -coef[0]
-                Kd = -coef[1]
-
-                print("=" * 40)
-                print(f"Optimal Stiffness (Kp): {Kp:.4f}")
-                print(f"Optimal Damping (Kd):   {Kd:.4f}")
-                print(f"Resting Angle (from default): {np.mean(q_def_arr):.4f} rad")
-                print("=" * 40)
-
-                # --- VISUAL VERIFICATION PLOT ---
-                try:
-                    import matplotlib.pyplot as plt
-                    # Extract data for Environment 0, Ankle 0 (Left Ankle) over time
-                    tau_env0 = [t[0, 0] for t in tau_log]
-                    q_env0 = [pos[0, 0] for pos in q_log]
-                    q_dot_env0 = [vel[0, 0] for vel in q_dot_log]
-                    q_def_env0 = [d[0, 0] for d in q_def_log]
-
-                    # Calculate fitted passive spring
-                    tau_fitted = [-Kp * (q - d) - Kd * qd for q, qd, d in zip(q_env0, q_dot_env0, q_def_env0)]
-
-                    plt.figure(figsize=(10, 8))
-                    plt.subplot(2, 1, 1)
-                    plt.plot(tau_env0, label="Actual Neural Network Torque", linewidth=2)
-                    plt.plot(tau_fitted, label="Fitted Passive Spring Torque", linestyle="--")
-                    plt.title("Verification: Ankle Torque over 500 Steps (Env 0, Left Ankle)")
-                    plt.ylabel("Torque (Nm)")
-                    plt.legend()
-
-                    plt.subplot(2, 1, 2)
-                    plt.plot(q_env0, label="Ankle Position (rad)", color='orange')
-                    plt.title("Verification: Ankle Joint Motion (Env 0)")
-                    plt.xlabel("Timestep")
-                    plt.ylabel("Position (rad)")
-                    plt.legend()
-
-                    plt.tight_layout()
-                    plot_path = os.path.join(os.getcwd(), "sysid_verification_plot.png")
-                    plt.savefig(plot_path)
-                    print(f"\n[SYSID] SUCCESS: Visual verification plot saved to {plot_path}")
-                except ImportError:
-                    print("\n[SYSID] Matplotlib not installed, skipping verification plot.")
-
-                break
+            # --- TRACK FORWARD PROGRESS STREAKS ---
+            # root_lin_vel_b is the base velocity in the base frame (x is forward)
+            forward_vel = robot.data.root_lin_vel_b[:, 0]
             
+            # Increment streak ONLY if it is moving forward at > 0.15 m/s
+            moving_forward = forward_vel > 0.15
+            current_streak += moving_forward.long()
+            
+            # Update max streak ever achieved by this environment
+            max_streak = torch.max(max_streak, current_streak)
+            
+            # If an environment falls (dones), its continuous streak is broken!
+            if dones.any():
+                current_streak[dones] = 0
+                
             timestep += 1
-            # -----------------------------
+            if timestep % 100 == 0:
+                print(f"  ... Step {timestep}/{total_test_steps} | Best streak so far: {max_streak.max().item()} steps")
+
+    # Search concluded
+    best_env = torch.argmax(max_streak).item()
+    best_kp = search_kp[best_env].item()
+    best_kd = search_kd[best_env].item()
+    best_score = max_streak[best_env].item()
+
+    print("\n" + "="*60)
+    print(f"[PASSIVE TUNER] SEARCH COMPLETE!")
+    if best_score == 0:
+        print("[PASSIVE TUNER] ALL ROBOTS FAILED TO MOVE FORWARD.")
+    else:
+        print(f"[PASSIVE TUNER] Environment {best_env} achieved the longest forward-walking streak!")
+        print(f"[PASSIVE TUNER] Forward Steps: {best_score} / {total_test_steps}")
+        print(f"[PASSIVE TUNER] Optimal Stiffness (Kp): {best_kp:.2f}")
+        print(f"[PASSIVE TUNER] Optimal Damping (Kd):   {best_kd:.2f}")
+    print("="*60 + "\n")
+
+    # close the simulator
+    env.close()
 
     # close the simulator
     env.close()

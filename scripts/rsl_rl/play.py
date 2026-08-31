@@ -125,6 +125,20 @@ def main():
     obs_history = obs_dict["observations"].get("obsHistory")
     obs_history = obs_history.flatten(start_dim=1)
     commands = obs_dict["observations"].get("commands") 
+
+    # --- PASSIVE ANKLE OVERRIDE ---
+    base_env = env.unwrapped
+    robot = base_env.scene["robot"]
+    ankle_indices, ankle_names = robot.find_joints("ankle_.*_Joint")
+    print(f"\n[PASSIVE MODE] Injecting Optimal Spring -> Kp: 90.91, Kd: 2.85")
+    print(f"[PASSIVE MODE] Forcing Neural Network actions to 0.0 for: {ankle_names}\n")
+
+    # Apply the winning spring physics
+    stiff = torch.full((base_env.num_envs, 2), 90.91, device=base_env.device)
+    damp = torch.full((base_env.num_envs, 2), 2.85, device=base_env.device)
+    robot.write_joint_stiffness_to_sim(stiff, joint_ids=ankle_indices)
+    robot.write_joint_damping_to_sim(damp, joint_ids=ankle_indices)
+
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
@@ -132,6 +146,10 @@ def main():
             # agent stepping
             est = encoder(obs_history)
             actions = policy(torch.cat((est, obs, commands), dim=-1).detach())
+            
+            # Zero out the ankle motor commands
+            actions[:, ankle_indices] = 0.0
+            
             # env stepping
             obs, _, _, infos = env.step(actions)
             obs_history = infos["observations"].get("obsHistory")

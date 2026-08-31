@@ -390,7 +390,18 @@ class RewardsCfg:
     pen_base_height = RewTerm(func=mdp.base_com_height, params={"target_height": 0.75}, weight=-5.0)
     pen_lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-10) # -0.5
     pen_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+    
+    # Standard torque penalty for all joints
     pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.00008)
+    
+    # TARGETED ANKLE PENALTY: 12x higher than normal to force passive behavior, 
+    # but low enough that the robot won't commit suicide to avoid it.
+    pen_ankle_torque = RewTerm(
+        func=mdp.joint_torques_l2, 
+        weight=-0.001, 
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["ankle_.*_Joint"])}
+    )
+    
     pen_joint_accel = RewTerm(func=mdp.joint_acc_l2, weight=-1e-6) # -2.5e-7
     pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.01) # Reduced from -0.5
     pen_joint_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-2.0)
