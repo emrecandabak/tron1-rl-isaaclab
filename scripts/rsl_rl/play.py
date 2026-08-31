@@ -126,13 +126,28 @@ def main():
     obs_history = obs_history.flatten(start_dim=1)
     commands = obs_dict["observations"].get("commands")
 
+    # --- PASSIVE ANKLE OVERRIDE ---
+    base_env = env.unwrapped
+    robot = base_env.scene["robot"]
+
+    action_term = base_env.action_manager.get_term("joint_pos")
+    action_ankle_indices = [i for i, name in enumerate(action_term._joint_names) if "ankle" in name.lower()]
+
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():
+            # Force forward walking command (0.4 m/s) so keyboard/joystick defaults don't make it stand still
+            commands[:, 0] = 0.4
+            commands[:, 1] = 0.0
+            commands[:, 2] = 0.0
+
             # agent stepping
             est = encoder(obs_history)
             actions = policy(torch.cat((est, obs, commands), dim=-1).detach())
+
+            # --- FORCE PASSIVE ANKLE (Zero out NN action) ---
+            actions[:, action_ankle_indices] = 0.0
 
             # env stepping
             obs, _, _, infos = env.step(actions)
