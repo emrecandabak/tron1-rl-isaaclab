@@ -90,6 +90,11 @@ class SFBlindFlatEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
         self.observations.critic.heights = None
 
         self.curriculum.terrain_levels = None
+        
+        # Override random commands with a gentle, consistent forward walking speed for play
+        self.commands.base_velocity.ranges.lin_vel_x = (0.4, 0.4)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
 
 
 #############################

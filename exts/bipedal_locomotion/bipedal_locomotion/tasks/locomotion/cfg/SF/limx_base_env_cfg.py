@@ -88,10 +88,10 @@ class CommandsCfg:
         resampling_time_range=(5.0, 5.0),  # Fixed resampling time of 5 seconds
         debug_vis=False,  # No debug visualization needed
         ranges=mdp.UniformGaitCommandCfg.Ranges(
-            frequencies=(0.8, 1.6), # (1.5, 2.5),  # Gait frequency range [Hz]
+            frequencies=(1.25, 1.25),  # FIXED: Simplifies learning dramatically
             offsets=(0.5, 0.5),  # Phase offset range [0-1]
             durations=(0.5, 0.5),  # Contact duration range [0-1]
-            swing_height=(0.1, 0.2)
+            swing_height=(0.1, 0.1) # FIXED: Simplifies learning
         ),
     )
 
@@ -144,7 +144,7 @@ class ObservarionsCfg:
         # gaits
         gait_phase = ObsTerm(func=mdp.get_gait_phase)
         gait_command = ObsTerm(func=mdp.get_gait_command, params={"command_name": "gait_command"})
-        
+
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
@@ -168,7 +168,7 @@ class ObservarionsCfg:
         # gaits
         gait_phase = ObsTerm(func=mdp.get_gait_phase)
         gait_command = ObsTerm(func=mdp.get_gait_command, params={"command_name": "gait_command"})
-        
+
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
@@ -221,7 +221,7 @@ class ObservarionsCfg:
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
-    
+
     @configclass
     class CommandsObsCfg(ObsGroup):
         velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
@@ -371,12 +371,12 @@ class RewardsCfg:
     # termination related rewards
     keep_balance = RewTerm(
         func=mdp.stay_alive,
-        weight=1.0
+        weight=0.1
     )
 
     # tracking rewards
     rew_lin_vel_xy = RewTerm(
-        func=mdp.track_lin_vel_xy_exp, weight=2.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
+        func=mdp.track_lin_vel_xy_exp, weight=5.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     )
     rew_ang_vel_z = RewTerm(
         func=mdp.track_ang_vel_z_exp, weight=1.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
@@ -387,12 +387,12 @@ class RewardsCfg:
     )
 
     # penalizations
-    pen_base_height = RewTerm(func=mdp.base_com_height, params={"target_height": 0.75}, weight=-50.0)
+    pen_base_height = RewTerm(func=mdp.base_com_height, params={"target_height": 0.75}, weight=-5.0)
     pen_lin_vel_z = RewTerm(func=mdp.lin_vel_z_l2, weight=-10) # -0.5
     pen_ang_vel_xy = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     pen_joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-0.00008)
     pen_joint_accel = RewTerm(func=mdp.joint_acc_l2, weight=-1e-6) # -2.5e-7
-    pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.5) # -0.01)
+    pen_action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.01) # Reduced from -0.5
     pen_joint_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-2.0)
 
     pen_undesired_contacts = RewTerm(
@@ -403,11 +403,11 @@ class RewardsCfg:
             "threshold": 10.0,
         },
     )
-    pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.15) # -0.01)
-    pen_flat_orientation = RewTerm(func=mdp.flat_orientation_l2, weight=-5.0)
+    pen_action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.01) # Reduced from -0.15
+    pen_flat_orientation = RewTerm(func=mdp.flat_orientation_l2, weight=-2.0) # Reduced from -5.0
     pen_feet_distance = RewTerm(
         func=mdp.feet_distance,
-        weight=-100,
+        weight=-5.0,
         params={"min_feet_distance": 0.115,"feet_links_name": ["ankle_[RL]_Link"]}
     )
     pen_feet_regulation = RewTerm(
@@ -450,7 +450,7 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_Link"), "threshold": 1.0},
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["base_Link", "knee_.*", "hip_.*", "abad_.*"]), "threshold": 1.0},
     )
 
 
@@ -465,7 +465,7 @@ class CurriculumCfg:
     #         params={
     #             "command_name": "base_velocity",
     #             "rwd_threshold": 0.7,
-    #             "time_step": 2e-4 / 24,
+    #             "time_step": 1e-3 / 24, # Sped up from 2e-4 to learn to walk much faster
     #             "max_lin_vel_x": (-1.0, 1.0),
     #             "max_lin_vel_y": (-0.75, 0.75),
     #         },
