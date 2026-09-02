@@ -1,100 +1,89 @@
 """
-Diagnostic & validation script for TRON1 pitch-axis flywheels.
-Tests:
-1. Joint & Body registration in PhysX.
-2. Mass & Inertia matrix verification.
-3. Dynamic torque reaction test (Conservation of Angular Momentum).
-"""
+Proper flywheel validation test that uses env.step() so the ActionManager
+pipeline is correctly engaged (ImplicitActuator targets are properly set).
 
+Action space: [6 leg joint_pos, 2 flywheel_vel]
+flywheel_vel actions in [-1, 1] are scaled by 150.0 → [-150, 150] rad/s
+"""
 import argparse
 import torch
 from isaaclab.app import AppLauncher
 
-# add argparse arguments
-parser = argparse.ArgumentParser(description="Validate TRON1 Flywheels in IsaacLab.")
+parser = argparse.ArgumentParser()
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
-
-# launch omniverse app
+args_cli.headless = True
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-import gymnasium as gym
-import isaaclab.sim as sim_utils
-from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab_tasks.utils import parse_env_cfg
 from isaaclab.envs import ManagerBasedRLEnv
-import bipedal_locomotion  # noqa: F401
+import bipedal_locomotion
 
-
-def validate_flywheels():
-    print("\n" + "="*70, flush=True)
-    print("           TRON1 FLYWHEEL VALIDATION & DYNAMICS TEST", flush=True)
-    print("="*70, flush=True)
-
-    # parse configuration
-    env_cfg: ManagerBasedRLEnvCfg = parse_env_cfg(
-        task_name="Isaac-Limx-SF-Blind-Flat-Play-v0", device=args_cli.device, num_envs=1
-    )
-    # create environment
+def main():
+    env_cfg = parse_env_cfg("Isaac-Limx-SF-Blind-Flat-Play-v0", device=args_cli.device, num_envs=1)
+    # Zero gravity so the robot floats
+    env_cfg.sim.gravity = (0.0, 0.0, 0.0)
     env = ManagerBasedRLEnv(cfg=env_cfg)
     base_env = env.unwrapped
     robot = base_env.scene["robot"]
 
-    # 1. Joint and Body Inspection
-    print("\n[1] INSPECTING ROBOT ARTICULATION:", flush=True)
-    all_joint_names = robot.data.joint_names
-    all_body_names = robot.data.body_names
-    print(f"  * Total Joints ({len(all_joint_names)}): {all_joint_names}", flush=True)
-    print(f"  * Total Bodies ({len(all_body_names)}): {all_body_names}", flush=True)
-
-    # Check flywheel indices
     flywheel_joint_ids, flywheel_joint_names = robot.find_joints("flywheel_.*_Joint")
-    flywheel_body_ids, flywheel_body_names = robot.find_bodies("flywheel_.*_Link")
+    print(f"\nFlywheel joints: {flywheel_joint_names} (ids: {flywheel_joint_ids})", flush=True)
 
-    if len(flywheel_joint_ids) != 2 or len(flywheel_body_ids) != 2:
-        print("\n[ERROR] Flywheel joints/bodies not detected correctly!", flush=True)
-        env.close()
-        return
+    # Check critic shape
+    obs, info = env.reset()
+    critic_obs = obs.get("critic", None)
+    if critic_obs is not None:
+        print(f"Critic shape: {critic_obs.shape}", flush=True)
 
-    print(f"\n[2] FLYWHEEL DETAILS:", flush=True)
-    print(f"  * Flywheel Joints : {flywheel_joint_names} (IDs: {flywheel_joint_ids})", flush=True)
-    print(f"  * Flywheel Bodies : {flywheel_body_names} (IDs: {flywheel_body_ids})", flush=True)
-    
-    # Check Mass
-    masses = robot.root_physx_view.get_masses()[0]
-    print(f"  * Flywheel L Mass : {masses[flywheel_body_ids[0]].item():.3f} kg", flush=True)
-    print(f"  * Flywheel R Mass : {masses[flywheel_body_ids[1]].item():.3f} kg", flush=True)
+    # Lift robot off the ground
+    root_state = robot.data.default_root_state.clone()
+    root_state[:, 2] = 1.5
+    root_state[:, 3:7] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=base_env.device)  # identity quat
+    root_state[:, 7:] = 0.0  # zero velocities
+    robot.write_root_state_to_sim(root_state)
 
-    # 2. Physics & Angular Momentum Test
-    print(f"\n[3] MOMENTUM TRANSFER & REACTION TORQUE TEST:", flush=True)
-    print("  Applying forward acceleration to flywheels...", flush=True)
-    print("  Expected behavior: Torso pitches BACKWARD (negative pitch rate)\n", flush=True)
+    # Construct action: [6 leg positions at 0, 2 flywheel velocities at MAX]
+    # Action dim = 8: [abad_L, abad_R, hip_L, hip_R, knee_L, knee_R, flywheel_L, flywheel_R]
+    action = torch.zeros(1, 8, device=base_env.device)
+    action[:, 6] = 1.0   # flywheel_L at max (scaled to 150 rad/s)
+    action[:, 7] = 1.0   # flywheel_R at max (scaled to 150 rad/s)
 
-    env.reset()
-    
-    # Run test for 60 simulation steps
-    for step in range(60):
-        # Command high velocity to the flywheels (150 rad/s = ~1430 RPM)
-        robot.set_joint_velocity_target(torch.tensor([[150.0, 150.0]], device=base_env.device), joint_ids=flywheel_joint_ids)
-        
-        # Step physics
-        base_env.scene.write_data_to_sim()
-        base_env.sim.step()
-        base_env.scene.update(dt=base_env.physics_dt)
+    print("\n--- PROPER FLYWHEEL TEST (using env.step) ---", flush=True)
+    results = []
+    for step in range(200):
+        obs, rew, terminated, truncated, info = env.step(action)
 
-        if step % 10 == 0:
-            flywheel_vel = robot.data.joint_vel[0, flywheel_joint_ids]
-            flywheel_tau = robot.data.applied_torque[0, flywheel_joint_ids]
-            base_ang_vel = robot.data.root_ang_vel_w[0] # [wx, wy, wz] (wy is pitch rate)
-            print(f"  Step {step:02d} | Torque: {flywheel_tau[0].item():5.1f} Nm | Speed: {flywheel_vel[0].item():6.1f} rad/s ({flywheel_vel[0].item()*9.55:6.0f} RPM) | Pitch Rate: {base_ang_vel[1].item():6.2f} rad/s", flush=True)
+        fw_vel_L = robot.data.joint_vel[0, flywheel_joint_ids[0]].item()
+        fw_vel_R = robot.data.joint_vel[0, flywheel_joint_ids[1]].item()
+        fw_rpm_L = fw_vel_L * 9.5493
+        fw_rpm_R = fw_vel_R * 9.5493
+        fw_tau_L = robot.data.applied_torque[0, flywheel_joint_ids[0]].item()
+        pitch_rate = robot.data.root_ang_vel_w[0, 1].item()
 
-    print("\n" + "="*70, flush=True)
-    print("  >>> VALIDATION SUCCESSFUL: Flywheels are fully functional in PhysX! <<<", flush=True)
-    print("="*70 + "\n", flush=True)
+        if step % 20 == 0 or step == 199:
+            line = (f"Step {step:03d} | Torque: {fw_tau_L:6.1f} Nm | "
+                    f"FW_L: {fw_vel_L:7.1f} rad/s ({fw_rpm_L:7.0f} RPM) | "
+                    f"FW_R: {fw_vel_R:7.1f} rad/s ({fw_rpm_R:7.0f} RPM) | "
+                    f"Torso Pitch Rate: {pitch_rate:7.2f} rad/s")
+            print(line, flush=True)
+            results.append(line)
+
+        # If terminated or truncated, reset
+        if terminated.any() or truncated.any():
+            obs, info = env.reset()
+            root_state = robot.data.default_root_state.clone()
+            root_state[:, 2] = 1.5
+            root_state[:, 3:7] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=base_env.device)
+            root_state[:, 7:] = 0.0
+            robot.write_root_state_to_sim(root_state)
+
+    with open("proper_test_output.txt", "w") as f:
+        f.write("\n".join(results))
 
     env.close()
 
 if __name__ == "__main__":
-    validate_flywheels()
+    main()
     simulation_app.close()
