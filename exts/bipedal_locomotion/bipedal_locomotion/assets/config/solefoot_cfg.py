@@ -5,7 +5,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
 current_dir = os.path.dirname(__file__)
-usd_path = os.path.join(current_dir, "../usd/SF_TRON1A/SF_TRON1A.usd")
+usd_path = os.path.join(current_dir, "../usd/SF_TRON1A/SF_TRON1A_flywheel.usd")
 
 SOLEFOOT_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
@@ -17,7 +17,7 @@ SOLEFOOT_CFG = ArticulationCfg(
             linear_damping=0.0,
             angular_damping=0.0,
             max_linear_velocity=1000.0,
-            max_angular_velocity=1000.0,
+            max_angular_velocity=20000.0,  # Increased from 1000.0 to allow flywheels to reach high RPM
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
@@ -58,8 +58,19 @@ SOLEFOOT_CFG = ArticulationCfg(
             ],
             effort_limit=80.0,
             velocity_limit=15.0,
-            stiffness=45.0,
-            damping=0.8,
+            stiffness=15.0,
+            damping=0.3,
+            friction=0.0,
+        ),
+        "flywheels": ImplicitActuatorCfg(
+            joint_names_expr=[
+                "flywheel_L_Joint",
+                "flywheel_R_Joint",
+            ],
+            effort_limit=15.0,
+            velocity_limit=260.0,
+            stiffness=0.0,
+            damping=2.5,  # High velocity gain so commanded RPM is driven with full motor torque
             friction=0.0,
         ),
     },

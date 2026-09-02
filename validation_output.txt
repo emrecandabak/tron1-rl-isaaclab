@@ -1,0 +1,6 @@
+Step 00 | Torque:  15.0 Nm | Flywheel:   -0.0 rad/s (    -0 RPM) | Torso Pitch Rate:   0.84 rad/s
+Step 20 | Torque:  15.0 Nm | Flywheel:    0.0 rad/s (     0 RPM) | Torso Pitch Rate:  -0.07 rad/s
+Step 40 | Torque:  15.0 Nm | Flywheel:    0.0 rad/s (     0 RPM) | Torso Pitch Rate:  -0.08 rad/s
+Step 60 | Torque:  15.0 Nm | Flywheel:   -0.0 rad/s (    -0 RPM) | Torso Pitch Rate: -22.15 rad/s
+Step 80 | Torque:  15.0 Nm | Flywheel:   -0.0 rad/s (    -0 RPM) | Torso Pitch Rate:  23.05 rad/s
+Step 99 | Torque:  15.0 Nm | Flywheel:  -33.9 rad/s (  -324 RPM) | Torso Pitch Rate:  27.50 rad/s

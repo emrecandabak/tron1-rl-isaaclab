@@ -15,6 +15,7 @@ from isaaclab.sensors import RayCasterCfg, patterns
 from bipedal_locomotion.tasks.locomotion import mdp
 from isaaclab.utils.noise import AdditiveGaussianNoiseCfg as GaussianNoise
 from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import SceneEntityCfg
 
 
@@ -42,7 +43,7 @@ class SFBaseEnvCfg(SFEnvCfg):
         self.events.add_base_mass.params["mass_distribution_params"] = (-1.0, 2.0)
 
         self.terminations.base_contact.params["sensor_cfg"].body_names = "base_Link"
-        
+
         # update viewport camera
         self.viewer.origin_type = "env"
 
@@ -84,16 +85,16 @@ class SFBlindFlatEnvCfg(SFBaseEnvCfg):
 class SFBlindFlatEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = None
         self.observations.policy.heights = None
         self.observations.critic.heights = None
 
         self.curriculum.terrain_levels = None
-        
+
         # Override random commands with a gentle, consistent forward walking speed for play
-        self.commands.base_velocity.ranges.lin_vel_x = (0.4, 0.4)
-        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 2.5)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.4, 0.4)
         self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
 
 
@@ -106,7 +107,7 @@ class SFBlindFlatEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
 class SFBlindRoughEnvCfg(SFBaseEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = None
         self.observations.policy.heights = None
         self.observations.critic.heights = None
@@ -114,21 +115,23 @@ class SFBlindRoughEnvCfg(SFBaseEnvCfg):
         self.scene.terrain.terrain_type = "generator"
         self.scene.terrain.terrain_generator = BLIND_ROUGH_TERRAINS_CFG
 
+        self.curriculum.terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
+
 
 @configclass
 class SFBlindRoughEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = None
         self.observations.policy.heights = None
         self.observations.critic.heights = None
-        
+
         # spawn the robot randomly in the grid (instead of their terrain levels)
         self.scene.terrain.terrain_type = "generator"
         self.scene.terrain.max_init_terrain_level = None
         self.scene.terrain.terrain_generator = BLIND_ROUGH_TERRAINS_PLAY_CFG
-        
+
 
 ##############################
 # Solefoot Blind Stairs Environment
@@ -138,7 +141,7 @@ class SFBlindRoughEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
 class SFBlindStairEnvCfg(SFBaseEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = None
         self.observations.policy.heights = None
         self.observations.critic.heights = None
@@ -163,7 +166,7 @@ class SFBlindStairEnvCfg(SFBaseEnvCfg):
 class SFBlindStairEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = None
         self.observations.policy.heights = None
         self.observations.critic.heights = None
@@ -178,8 +181,8 @@ class SFBlindStairEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
         self.scene.terrain.terrain_type = "generator"
         self.scene.terrain.max_init_terrain_level = None
         self.scene.terrain.terrain_generator = STAIRS_TERRAINS_PLAY_CFG.replace(difficulty_range=(0.5, 0.5))
-        
-        
+
+
 #############################
 # Solefoot Flat Environment
 #############################
@@ -188,7 +191,7 @@ class SFBlindStairEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
 class SFFlatEnvCfg(SFBaseEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             attach_yaw_only=True,
@@ -211,7 +214,7 @@ class SFFlatEnvCfg(SFBaseEnvCfg):
 class SFFlatEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             attach_yaw_only=True,
@@ -228,8 +231,8 @@ class SFFlatEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
         self.scene.height_scanner.update_period = self.decimation * self.sim.dt
 
         self.curriculum.terrain_levels = None
-        
-        
+
+
 #############################
 # Solefoot Rough Environment
 #############################
@@ -238,7 +241,7 @@ class SFFlatEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
 class SFRoughEnvCfg(SFBaseEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             attach_yaw_only=True,
@@ -266,7 +269,7 @@ class SFRoughEnvCfg(SFBaseEnvCfg):
 class SFRoughEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             attach_yaw_only=True,
@@ -289,8 +292,8 @@ class SFRoughEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
 
 
 
-        
-        
+
+
 ##############################
 # Solefoot Blind Stairs Environment
 ##############################
@@ -300,7 +303,7 @@ class SFRoughEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
 class SFStairEnvCfg(SFBaseEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             attach_yaw_only=True,
@@ -331,7 +334,7 @@ class SFStairEnvCfg(SFBaseEnvCfg):
 class SFStairEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
     def __post_init__(self):
         super().__post_init__()
-        
+
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             attach_yaw_only=True,
@@ -359,6 +362,3 @@ class SFStairEnvCfg_PLAY(SFBaseEnvCfg_PLAY):
         self.scene.terrain.terrain_type = "generator"
         self.scene.terrain.max_init_terrain_level = None
         self.scene.terrain.terrain_generator = STAIRS_TERRAINS_PLAY_CFG.replace(difficulty_range=(0.5, 0.5))
-        
-
-

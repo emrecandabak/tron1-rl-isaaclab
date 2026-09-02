@@ -57,7 +57,6 @@ def disable_termination(
     Returns:
         torch.Tensor: Whether the parameter has already been modified or not.
     """
-    env.command_manager.num_envs
     if env.common_step_counter > num_steps:
         # obtain term settings
         term_cfg = env.termination_manager.get_term_cfg(term_name)
@@ -65,5 +64,41 @@ def disable_termination(
         term_cfg.params = dict()
         term_cfg.func = lambda env: torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
         env.termination_manager.set_term_cfg(term_name, term_cfg)
-        return torch.ones(1)
-    return torch.zeros(1)
+        return torch.ones(1, device=env.device)
+    return torch.zeros(1, device=env.device)
+
+
+def velocity_command_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    command_name: str = "base_velocity",
+    reward_threshold: float = 0.70,
+    max_lin_vel_x: tuple[float, float] = (-1.0, 2.5),
+    max_lin_vel_y: tuple[float, float] = (-0.4, 0.4),
+    step_size_x: float = 0.05,
+    step_size_y: float = 0.02,
+) -> torch.Tensor:
+    """Progressively expand the velocity command range from walking to running as tracking performance improves."""
+    command_term = env.command_manager.get_term(command_name)
+    
+    # Compute current velocity tracking accuracy directly
+    asset = env.scene["robot"]
+    command = env.command_manager.get_command(command_name)
+    lin_vel_xy_err = torch.norm(command[:, :2] - asset.data.root_lin_vel_b[:, :2], dim=-1)
+    tracking_score = torch.mean(torch.exp(-lin_vel_xy_err / 0.40)).item()
+    
+    current_min_x, current_max_x = command_term.cfg.ranges.lin_vel_x
+    
+    # When tracking score exceeds threshold, expand velocity limits towards running speeds
+    if tracking_score > reward_threshold:
+        new_max_x = min(current_max_x + step_size_x, max_lin_vel_x[1])
+        new_min_x = max(current_min_x - step_size_x, max_lin_vel_x[0])
+        command_term.cfg.ranges.lin_vel_x = (new_min_x, new_max_x)
+        
+        current_min_y, current_max_y = command_term.cfg.ranges.lin_vel_y
+        new_max_y = min(current_max_y + step_size_y, max_lin_vel_y[1])
+        new_min_y = max(current_min_y - step_size_y, max_lin_vel_y[0])
+        command_term.cfg.ranges.lin_vel_y = (new_min_y, new_max_y)
+
+    return torch.tensor(command_term.cfg.ranges.lin_vel_x[1], device=env.device)
+

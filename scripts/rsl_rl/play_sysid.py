@@ -132,18 +132,23 @@ def main():
     import matplotlib.pyplot as plt
     base_env = env.unwrapped
     robot = base_env.scene["robot"]
-    
+
     # Get physical URDF indices to track the true physics state of the ankles
     phys_ankle_indices, phys_ankle_names = robot.find_joints("ankle_.*_Joint")
     print(f"\n[SYSID] Collecting data for: {phys_ankle_names}")
-    
-    total_test_steps = 500
-    print(f"[SYSID] Recording active policy behavior for {total_test_steps} steps...\n")
+
+    # Get ActionManager indices to zero out neural network output for ankles
+    action_term = base_env.action_manager.get_term("joint_pos")
+    action_ankle_indices = [i for i, name in enumerate(action_term._joint_names) if "ankle" in name.lower()]
+    print(f"[SYSID] Action Tensor Ankles: {action_ankle_indices} (forcing action=0.0 for passive mode)\n")
+
+    total_test_steps = 3000
+    print(f"[SYSID] Recording passive ankle behavior for {total_test_steps} steps...\n")
 
     q_data = []
     v_data = []
     tau_data = []
-    
+
     # For plotting robot 0
     plot_tau_l = []
     plot_tau_r = []
@@ -156,31 +161,34 @@ def main():
             # agent stepping
             est = encoder(obs_history)
             actions = policy(torch.cat((est, obs, commands), dim=-1).detach())
-            
-            # env stepping (ACTIVE POLICY - No Zeroing!)
+
+            # --- FORCE PASSIVE ANKLE (Zero out NN action) ---
+            actions[:, action_ankle_indices] = 0.0
+
+            # env stepping
             obs, rew, dones, infos = env.step(actions)
             obs_history = infos["observations"].get("obsHistory")
             obs_history = obs_history.flatten(start_dim=1)
-            commands = infos["observations"].get("commands") 
+            commands = infos["observations"].get("commands")
 
             # Collect physical state of the ankles
             q = robot.data.joint_pos[:, phys_ankle_indices]
             v = robot.data.joint_vel[:, phys_ankle_indices]
             tau = robot.data.applied_torque[:, phys_ankle_indices]
-            
+
             # Store for plotting (always tracking robot 0)
             plot_tau_l.append(tau[0, 0].item())
             plot_tau_r.append(tau[0, 1].item())
-            
+
             # Filter to only capture data when the robot is actually standing/walking
             base_height = robot.data.root_pos_w[:, 2]
             valid_mask = (base_height > 0.65)
-            
+
             if valid_mask.any():
                 q_data.append(q[valid_mask].reshape(-1))
                 v_data.append(v[valid_mask].reshape(-1))
                 tau_data.append(tau[valid_mask].reshape(-1))
-                
+
             timestep += 1
             if timestep % 100 == 0:
                 print(f"  ... Collected {timestep}/{total_test_steps} steps of active control data")
@@ -191,11 +199,11 @@ def main():
     plt.plot(plot_tau_l, label="Left Ankle Torque (Nm)")
     plt.plot(plot_tau_r, label="Right Ankle Torque (Nm)", alpha=0.7)
     plt.axhline(0, color='black', linestyle='--', linewidth=1)
-    
+
     # Shade the 80 Nm limits
     plt.axhline(80, color='red', linestyle=':', alpha=0.5, label="Max Effort Limit")
     plt.axhline(-80, color='red', linestyle=':', alpha=0.5)
-    
+
     plt.title("Active Policy Applied Ankle Torques over Time")
     plt.xlabel("Simulation Steps")
     plt.ylabel("Torque (Nm)")
@@ -212,29 +220,29 @@ def main():
 
     # --- LEAST SQUARES REGRESSION ---
     print("\n[SYSID] Running Least Squares regression to extract spring parameters...")
-    
+
     # Combine data
     Q = torch.cat(q_data).cpu()
     V = torch.cat(v_data).cpu()
     TAU = torch.cat(tau_data).cpu()
-    
+
     # We want to fit: tau = -Kp * (q - q_rest) - Kd * v
     # This expands to: tau = -Kp * q - Kd * v + (Kp * q_rest)
     # Let C = (Kp * q_rest)
     # Regression model: tau = Beta1 * q + Beta2 * v + Beta3 * 1
-    
+
     Y = TAU.unsqueeze(1)
     X = torch.stack([Q, V, torch.ones_like(Q)], dim=1)
-    
+
     # Solve X * Beta = Y
     result = torch.linalg.lstsq(X, Y)
     beta = result.solution.squeeze()
-    
+
     # Extract physical parameters from coefficients
     Kp = -beta[0].item()
     Kd = -beta[1].item()
     C = beta[2].item()
-    
+
     q_rest = (C / Kp) if Kp != 0 else 0.0
 
     print("\n" + "="*60)

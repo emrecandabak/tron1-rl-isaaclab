@@ -16,7 +16,7 @@ from isaaclab.terrains import (
 
 BLIND_ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     seed=42,
-    size=(8.0, 8.0),
+    size=(10.0, 10.0),
     border_width=20.0,
     num_rows=10,
     num_cols=16,
@@ -25,13 +25,19 @@ BLIND_ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     slope_threshold=0.75,
     use_cache=True,
     sub_terrains={
-        "flat": MeshPlaneTerrainCfg(proportion=0.25),
-        "waves": HfWaveTerrainCfg(proportion=0.25, amplitude_range=(0.01, 0.06), num_waves=10, border_width=0.25),
+        "flat": MeshPlaneTerrainCfg(proportion=0.15),
+        "pyramid_slope": HfPyramidSlopedTerrainCfg(
+            proportion=0.20, slope_range=(0.05, 0.35), platform_width=2.0, border_width=0.25
+        ),
+        "pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.05, 0.35), platform_width=2.0, border_width=0.25
+        ),
+        "waves": HfWaveTerrainCfg(proportion=0.20, amplitude_range=(0.02, 0.10), num_waves=8, border_width=0.25),
         "boxes": MeshRandomGridTerrainCfg(
-            proportion=0.25, grid_width=0.15, grid_height_range=(0.01, 0.04), platform_width=2.0
+            proportion=0.15, grid_width=0.30, grid_height_range=(0.02, 0.08), platform_width=2.0
         ),
         "random_rough": HfRandomUniformTerrainCfg(
-            proportion=0.25, noise_range=(0.01, 0.06), noise_step=0.01, border_width=0.25
+            proportion=0.15, noise_range=(0.02, 0.08), noise_step=0.01, border_width=0.25
         ),
     },
     curriculum=True,
@@ -41,7 +47,7 @@ BLIND_ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
 BLIND_ROUGH_TERRAINS_PLAY_CFG = TerrainGeneratorCfg(
     seed=42,
     size=(8.0, 8.0),
-    border_width=20.0,
+    border_width=1.0,  # Reduced from 20.0 so the robot doesn't walk out into a massive flat void
     num_rows=4,
     num_cols=4,
     horizontal_scale=0.1,
@@ -49,12 +55,19 @@ BLIND_ROUGH_TERRAINS_PLAY_CFG = TerrainGeneratorCfg(
     slope_threshold=0.75,
     use_cache=True,
     sub_terrains={
-        "waves": HfWaveTerrainCfg(proportion=0.33, amplitude_range=(0.01, 0.06), num_waves=10, border_width=0.25),
+        # Removed 'flat' completely so every patch is rough
+        "pyramid_slope": HfPyramidSlopedTerrainCfg(
+            proportion=0.25, slope_range=(0.05, 0.35), platform_width=2.0, border_width=0.25
+        ),
+        "pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.05, 0.35), platform_width=2.0, border_width=0.25
+        ),
+        "waves": HfWaveTerrainCfg(proportion=0.30, amplitude_range=(0.02, 0.10), num_waves=8, border_width=0.25),
         "boxes": MeshRandomGridTerrainCfg(
-            proportion=0.2, grid_width=0.33, grid_height_range=(0.01, 0.04), platform_width=2.0
+            proportion=0.15, grid_width=0.30, grid_height_range=(0.02, 0.08), platform_width=2.0
         ),
         "random_rough": HfRandomUniformTerrainCfg(
-            proportion=0.34, noise_range=(0.01, 0.06), noise_step=0.01, border_width=0.25
+            proportion=0.15, noise_range=(0.02, 0.08), noise_step=0.01, border_width=0.25
         ),
     },
     curriculum=False,

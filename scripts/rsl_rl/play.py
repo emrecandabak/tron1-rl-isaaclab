@@ -8,6 +8,7 @@ from isaaclab.app import AppLauncher
 
 # local imports
 import cli_args  # isort: skip
+import math
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
@@ -130,30 +131,33 @@ def main():
     base_env = env.unwrapped
     robot = base_env.scene["robot"]
 
-    action_term = base_env.action_manager.get_term("joint_pos")
-    action_ankle_indices = [i for i, name in enumerate(action_term._joint_names) if "ankle" in name.lower()]
+    # --- FLYWHEEL TELEMETRY ---
+    flywheel_joint_ids, flywheel_joint_names = robot.find_joints("flywheel_.*_Joint")
+    print(f"[PLAY] Tracking Flywheels: {flywheel_joint_names} (Joint IDs: {flywheel_joint_ids})\n")
 
+    step_count = 0
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():
-            # Force forward walking command (0.4 m/s) so keyboard/joystick defaults don't make it stand still
-            commands[:, 0] = 0.4
-            commands[:, 1] = 0.0
-            commands[:, 2] = 0.0
-
             # agent stepping
             est = encoder(obs_history)
             actions = policy(torch.cat((est, obs, commands), dim=-1).detach())
-
-            # --- FORCE PASSIVE ANKLE (Zero out NN action) ---
-            actions[:, action_ankle_indices] = 0.0
 
             # env stepping
             obs, _, _, infos = env.step(actions)
             obs_history = infos["observations"].get("obsHistory")
             obs_history = obs_history.flatten(start_dim=1)
             commands = infos["observations"].get("commands")
+
+            step_count += 1
+            if step_count % 10 == 0:
+                fw_vel = robot.data.joint_vel[0, flywheel_joint_ids]  # rad/s
+                fw_rpm = fw_vel * 9.5493  # convert to RPM
+                fw_tau = robot.data.applied_torque[0, flywheel_joint_ids]
+                roll_deg = math.degrees(math.atan2(robot.data.projected_gravity_b[0, 1].item(), -robot.data.projected_gravity_b[0, 2].item()))
+                pitch_deg = math.degrees(math.atan2(-robot.data.projected_gravity_b[0, 0].item(), -robot.data.projected_gravity_b[0, 2].item()))
+                print(f"[Teleop] Roll: {roll_deg:+5.1f}° | Pitch: {pitch_deg:+5.1f}° | Flywheel L: {fw_rpm[0].item():+6.0f} RPM ({fw_tau[0].item():+4.1f} Nm) | Flywheel R: {fw_rpm[1].item():+6.0f} RPM ({fw_tau[1].item():+4.1f} Nm)", end="\r", flush=True)
 
     # close the simulator
     env.close()

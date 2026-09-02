@@ -46,12 +46,50 @@ def foot_landing_vel(
     reward = torch.sum(torch.square(landing_z_vels), dim=1)
     return reward
 
+
+def feet_slide(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize foot horizontal velocity while foot is in contact with the ground (slipping)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    
+    contacts = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2] > 1.0
+    foot_vel_xy = torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=-1)
+    
+    return torch.sum(torch.square(foot_vel_xy) * contacts.float(), dim=-1)
+
+
 def joint_powers_l1(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize joint powers on the articulation using L1-kernel"""
 
     # extract the used quantities (to enable type-hinting)
     asset: Articulation = env.scene[asset_cfg.name]
     return torch.sum(torch.abs(torch.mul(asset.data.applied_torque, asset.data.joint_vel)), dim=1)
+
+
+def feet_air_time_positive(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 0.25,
+    command_name: str = "base_velocity",
+) -> torch.Tensor:
+    """Reward feet for spending time in the air (stepping/swinging) when velocity commands are non-zero."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    # Check if first contact after air phase
+    current_contact = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids] > 0.0
+    first_contact = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids] == 0.0
+    air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    
+    # Reward for air time above threshold on foot touchdown
+    reward = torch.sum((air_time - threshold).clamp(min=0.0, max=0.5) * first_contact.float(), dim=-1)
+    
+    # Only reward when commanded to move
+    commands = env.command_manager.get_command(command_name)
+    is_moving = torch.norm(commands[:, :2], dim=-1) > 0.1
+    return reward * is_moving.float()
 
 
 def no_fly(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, threshold: float = 1.0) -> torch.Tensor:
@@ -74,20 +112,15 @@ def unbalance_feet_air_time(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) 
     return torch.var(contact_sensor.data.last_air_time[:, sensor_cfg.body_ids], dim=-1)
 
 
-def unbalance_feet_height(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
-    """Penalize the variance of feet maximum height using sensor positions."""
+def flat_roll_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize roll tilt (lateral tilt) using L2 squared kernel on projected gravity y-component."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.square(asset.data.projected_gravity_b[:, 1])
 
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-
-    feet_positions = contact_sensor.data.pos_w[:, sensor_cfg.body_ids]
-
-    if feet_positions is None:
-        return torch.zeros(env.num_envs)
-
-    feet_heights = feet_positions[:, :, 2]
-    max_feet_heights = torch.max(feet_heights, dim=-1)[0]
-    height_variance = torch.var(max_feet_heights, dim=-1)
-    return height_variance
+def flat_pitch_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize pitch tilt (forward/backward tilt) using L2 squared kernel on projected gravity x-component."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.square(asset.data.projected_gravity_b[:, 0])
 
 
 # def feet_distance(
@@ -122,6 +155,48 @@ def feet_distance(env: ManagerBasedRLEnv,
     reward = torch.clip(min_feet_distance - feet_distance, 0, 1)
     reward += torch.clip(feet_distance - max_feet_distance, 0, 1)
     return reward
+
+
+def lateral_feet_distance(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    min_lateral_distance: float = 0.16,
+) -> torch.Tensor:
+    """Penalize feet coming too close laterally or crossing over in the robot base frame."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    idx_L = asset.find_bodies("ankle_L_Link")[0][0]
+    idx_R = asset.find_bodies("ankle_R_Link")[0][0]
+    feet_pos_w = asset.data.body_link_pos_w[:, [idx_L, idx_R]]
+
+    base_quat = asset.data.root_link_quat_w.unsqueeze(1).expand(-1, 2, -1)
+    base_pos = asset.data.root_link_state_w[:, :3].unsqueeze(1).expand(-1, 2, -1)
+    feet_pos_b = math_utils.quat_rotate_inverse(base_quat, feet_pos_w - base_pos)
+
+    # Left foot y minus Right foot y in base frame (Left should be strictly positive relative to Right)
+    lateral_dist = feet_pos_b[:, 0, 1] - feet_pos_b[:, 1, 1]
+    penalty = torch.clamp(min_lateral_distance - lateral_dist, min=0.0)
+    return torch.square(penalty)
+
+
+def lateral_knee_distance(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    min_lateral_distance: float = 0.15,
+) -> torch.Tensor:
+    """Penalize knees coming too close laterally or crossing over in the robot base frame."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    idx_L = asset.find_bodies("knee_L_Link")[0][0]
+    idx_R = asset.find_bodies("knee_R_Link")[0][0]
+    knee_pos_w = asset.data.body_link_pos_w[:, [idx_L, idx_R]]
+
+    base_quat = asset.data.root_link_quat_w.unsqueeze(1).expand(-1, 2, -1)
+    base_pos = asset.data.root_link_state_w[:, :3].unsqueeze(1).expand(-1, 2, -1)
+    knee_pos_b = math_utils.quat_rotate_inverse(base_quat, knee_pos_w - base_pos)
+
+    lateral_dist = knee_pos_b[:, 0, 1] - knee_pos_b[:, 1, 1]
+    penalty = torch.clamp(min_lateral_distance - lateral_dist, min=0.0)
+    return torch.square(penalty)
+
 
 def nominal_foot_position(env: ManagerBasedRLEnv, command_name: str,
                           base_height_target: float,
@@ -333,13 +408,14 @@ def base_com_height(
     asset: RigidObject = env.scene[asset_cfg.name]
     if sensor_cfg is not None:
         sensor: RayCaster = env.scene[sensor_cfg.name]
-        # Adjust the target height using the sensor data
         adjusted_target_height = target_height + torch.mean(sensor.data.ray_hits_w[..., 2], dim=1)
+        return torch.abs(asset.data.root_pos_w[:, 2] - adjusted_target_height)
     else:
-        # Use the provided target height directly for flat terrain
-        adjusted_target_height = target_height
-    # Compute the L2 squared penalty
-    return torch.abs(asset.data.root_pos_w[:, 2] - adjusted_target_height)
+        # Measure base height relative to feet position (terrain-invariant for flat, slopes, and rough terrain)
+        feet_idx = asset.find_bodies(["ankle_L_Link", "ankle_R_Link"])[0]
+        feet_z = torch.mean(asset.data.body_link_pos_w[:, feet_idx, 2], dim=-1)
+        rel_height = asset.data.root_pos_w[:, 2] - feet_z
+        return torch.abs(rel_height - target_height)
 
 
 class GaitReward(ManagerTermBase):
@@ -532,3 +608,19 @@ class ActionSmoothnessPenalty(ManagerTermBase):
 
         # Return the penalty scaled by the configured weight
         return penalty
+
+
+def root_height_relative_below_minimum(
+    env: ManagerBasedRLEnv,
+    minimum_height: float = 0.45,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Terminate when the asset's base height relative to its feet is below the minimum height.
+    Works seamlessly on flat ground, ramps, slopes, and rough terrain.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    feet_idx = asset.find_bodies(["ankle_L_Link", "ankle_R_Link"])[0]
+    feet_z = torch.mean(asset.data.body_link_pos_w[:, feet_idx, 2], dim=-1)
+    rel_height = asset.data.root_pos_w[:, 2] - feet_z
+    return rel_height < minimum_height
+
